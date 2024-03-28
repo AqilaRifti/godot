@@ -1,60 +1,58 @@
-/*************************************************************************/
-/*  net_socket_posix.cpp                                                 */
-/*************************************************************************/
-/*                       This file is part of:                           */
-/*                           GODOT ENGINE                                */
-/*                      https://godotengine.org                          */
-/*************************************************************************/
-/* Copyright (c) 2007-2020 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2020 Godot Engine contributors (cf. AUTHORS.md).   */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
+/**************************************************************************/
+/*  net_socket_posix.cpp                                                  */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
 
 #include "net_socket_posix.h"
 
+// Some proprietary Unix-derived platforms don't expose Unix sockets
+// so this allows skipping this file to reimplement this API differently.
 #ifndef UNIX_SOCKET_UNAVAILABLE
+
 #if defined(UNIX_ENABLED)
 
 #include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
-#ifndef NO_FCNTL
-#include <fcntl.h>
-#else
-#include <sys/ioctl.h>
-#endif
-#include <netinet/in.h>
 
-#include <sys/socket.h>
-#ifdef JAVASCRIPT_ENABLED
+#ifdef WEB_ENABLED
 #include <arpa/inet.h>
 #endif
-
-#include <netinet/tcp.h>
 
 // BSD calls this flag IPV6_JOIN_GROUP
 #if !defined(IPV6_ADD_MEMBERSHIP) && defined(IPV6_JOIN_GROUP)
@@ -93,9 +91,9 @@
 #define SIO_UDP_NETRESET _WSAIOW(IOC_VENDOR, 15)
 #endif
 
-#endif
+#endif // UNIX_ENABLED
 
-size_t NetSocketPosix::_set_addr_storage(struct sockaddr_storage *p_addr, const IP_Address &p_ip, uint16_t p_port, IP::Type p_ip_type) {
+size_t NetSocketPosix::_set_addr_storage(struct sockaddr_storage *p_addr, const IPAddress &p_ip, uint16_t p_port, IP::Type p_ip_type) {
 	memset(p_addr, 0, sizeof(struct sockaddr_storage));
 	if (p_ip_type == IP::TYPE_IPV6 || p_ip_type == IP::TYPE_ANY) { // IPv6 socket
 
@@ -106,7 +104,7 @@ size_t NetSocketPosix::_set_addr_storage(struct sockaddr_storage *p_addr, const 
 		addr6->sin6_family = AF_INET6;
 		addr6->sin6_port = htons(p_port);
 		if (p_ip.is_valid()) {
-			copymem(&addr6->sin6_addr.s6_addr, p_ip.get_ipv6(), 16);
+			memcpy(&addr6->sin6_addr.s6_addr, p_ip.get_ipv6(), 16);
 		} else {
 			addr6->sin6_addr = in6addr_any;
 		}
@@ -121,7 +119,7 @@ size_t NetSocketPosix::_set_addr_storage(struct sockaddr_storage *p_addr, const 
 		addr4->sin_port = htons(p_port); // short, network byte order
 
 		if (p_ip.is_valid()) {
-			copymem(&addr4->sin_addr.s_addr, p_ip.get_ipv4(), 4);
+			memcpy(&addr4->sin_addr.s_addr, p_ip.get_ipv4(), 4);
 		} else {
 			addr4->sin_addr.s_addr = INADDR_ANY;
 		}
@@ -130,19 +128,24 @@ size_t NetSocketPosix::_set_addr_storage(struct sockaddr_storage *p_addr, const 
 	}
 }
 
-void NetSocketPosix::_set_ip_port(struct sockaddr_storage *p_addr, IP_Address &r_ip, uint16_t &r_port) {
+void NetSocketPosix::_set_ip_port(struct sockaddr_storage *p_addr, IPAddress *r_ip, uint16_t *r_port) {
 	if (p_addr->ss_family == AF_INET) {
 		struct sockaddr_in *addr4 = (struct sockaddr_in *)p_addr;
-		r_ip.set_ipv4((uint8_t *)&(addr4->sin_addr.s_addr));
-
-		r_port = ntohs(addr4->sin_port);
-
+		if (r_ip) {
+			r_ip->set_ipv4((uint8_t *)&(addr4->sin_addr.s_addr));
+		}
+		if (r_port) {
+			*r_port = ntohs(addr4->sin_port);
+		}
 	} else if (p_addr->ss_family == AF_INET6) {
 		struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)p_addr;
-		r_ip.set_ipv6(addr6->sin6_addr.s6_addr);
-
-		r_port = ntohs(addr6->sin6_port);
-	};
+		if (r_ip) {
+			r_ip->set_ipv6(addr6->sin6_addr.s6_addr);
+		}
+		if (r_port) {
+			*r_port = ntohs(addr6->sin6_port);
+		}
+	}
 }
 
 NetSocket *NetSocketPosix::_create_func() {
@@ -176,8 +179,8 @@ NetSocketPosix::~NetSocketPosix() {
 	close();
 }
 
-// Silent a warning reported in #27594
-
+// Silence a warning reported in GH-27594.
+// EAGAIN and EWOULDBLOCK have the same value on most platforms, but it's not guaranteed.
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wlogical-op"
@@ -186,13 +189,24 @@ NetSocketPosix::~NetSocketPosix() {
 NetSocketPosix::NetError NetSocketPosix::_get_socket_error() const {
 #if defined(WINDOWS_ENABLED)
 	int err = WSAGetLastError();
-
-	if (err == WSAEISCONN)
+	if (err == WSAEISCONN) {
 		return ERR_NET_IS_CONNECTED;
-	if (err == WSAEINPROGRESS || err == WSAEALREADY)
+	}
+	if (err == WSAEINPROGRESS || err == WSAEALREADY) {
 		return ERR_NET_IN_PROGRESS;
-	if (err == WSAEWOULDBLOCK)
+	}
+	if (err == WSAEWOULDBLOCK) {
 		return ERR_NET_WOULD_BLOCK;
+	}
+	if (err == WSAEADDRINUSE || err == WSAEADDRNOTAVAIL) {
+		return ERR_NET_ADDRESS_INVALID_OR_UNAVAILABLE;
+	}
+	if (err == WSAEACCES) {
+		return ERR_NET_UNAUTHORIZED;
+	}
+	if (err == WSAEMSGSIZE || err == WSAENOBUFS) {
+		return ERR_NET_BUFFER_TOO_SMALL;
+	}
 	print_verbose("Socket error: " + itos(err));
 	return ERR_NET_OTHER;
 #else
@@ -205,6 +219,15 @@ NetSocketPosix::NetError NetSocketPosix::_get_socket_error() const {
 	if (errno == EAGAIN || errno == EWOULDBLOCK) {
 		return ERR_NET_WOULD_BLOCK;
 	}
+	if (errno == EADDRINUSE || errno == EINVAL || errno == EADDRNOTAVAIL) {
+		return ERR_NET_ADDRESS_INVALID_OR_UNAVAILABLE;
+	}
+	if (errno == EACCES) {
+		return ERR_NET_UNAUTHORIZED;
+	}
+	if (errno == ENOBUFS) {
+		return ERR_NET_BUFFER_TOO_SMALL;
+	}
 	print_verbose("Socket error: " + itos(errno));
 	return ERR_NET_OTHER;
 #endif
@@ -214,7 +237,7 @@ NetSocketPosix::NetError NetSocketPosix::_get_socket_error() const {
 #pragma GCC diagnostic pop
 #endif
 
-bool NetSocketPosix::_can_use_ip(const IP_Address &p_ip, const bool p_for_bind) const {
+bool NetSocketPosix::_can_use_ip(const IPAddress &p_ip, const bool p_for_bind) const {
 	if (p_for_bind && !(p_ip.is_valid() || p_ip.is_wildcard())) {
 		return false;
 	} else if (!p_for_bind && !p_ip.is_valid()) {
@@ -225,7 +248,7 @@ bool NetSocketPosix::_can_use_ip(const IP_Address &p_ip, const bool p_for_bind) 
 	return !(_ip_type != IP::TYPE_ANY && !p_ip.is_wildcard() && _ip_type != type);
 }
 
-_FORCE_INLINE_ Error NetSocketPosix::_change_multicast_group(IP_Address p_ip, String p_if_name, bool p_add) {
+_FORCE_INLINE_ Error NetSocketPosix::_change_multicast_group(IPAddress p_ip, String p_if_name, bool p_add) {
 	ERR_FAIL_COND_V(!is_open(), ERR_UNCONFIGURED);
 	ERR_FAIL_COND_V(!_can_use_ip(p_ip, false), ERR_INVALID_PARAMETER);
 
@@ -235,12 +258,12 @@ _FORCE_INLINE_ Error NetSocketPosix::_change_multicast_group(IP_Address p_ip, St
 	int level = type == IP::TYPE_IPV4 ? IPPROTO_IP : IPPROTO_IPV6;
 	int ret = -1;
 
-	IP_Address if_ip;
+	IPAddress if_ip;
 	uint32_t if_v6id = 0;
-	Map<String, IP::Interface_Info> if_info;
+	HashMap<String, IP::Interface_Info> if_info;
 	IP::get_singleton()->get_local_interfaces(&if_info);
-	for (Map<String, IP::Interface_Info>::Element *E = if_info.front(); E; E = E->next()) {
-		IP::Interface_Info &c = E->get();
+	for (KeyValue<String, IP::Interface_Info> &E : if_info) {
+		IP::Interface_Info &c = E.value;
 		if (c.name != p_if_name) {
 			continue;
 		}
@@ -250,11 +273,11 @@ _FORCE_INLINE_ Error NetSocketPosix::_change_multicast_group(IP_Address p_ip, St
 			break; // IPv6 uses index.
 		}
 
-		for (List<IP_Address>::Element *F = c.ip_addresses.front(); F; F = F->next()) {
-			if (!F->get().is_ipv4()) {
+		for (const IPAddress &F : c.ip_addresses) {
+			if (!F.is_ipv4()) {
 				continue; // Wrong IP type
 			}
-			if_ip = F->get();
+			if_ip = F;
 			break;
 		}
 		break;
@@ -264,13 +287,13 @@ _FORCE_INLINE_ Error NetSocketPosix::_change_multicast_group(IP_Address p_ip, St
 		ERR_FAIL_COND_V(!if_ip.is_valid(), ERR_INVALID_PARAMETER);
 		struct ip_mreq greq;
 		int sock_opt = p_add ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP;
-		copymem(&greq.imr_multiaddr, p_ip.get_ipv4(), 4);
-		copymem(&greq.imr_interface, if_ip.get_ipv4(), 4);
+		memcpy(&greq.imr_multiaddr, p_ip.get_ipv4(), 4);
+		memcpy(&greq.imr_interface, if_ip.get_ipv4(), 4);
 		ret = setsockopt(_sock, level, sock_opt, (const char *)&greq, sizeof(greq));
 	} else {
 		struct ipv6_mreq greq;
 		int sock_opt = p_add ? IPV6_ADD_MEMBERSHIP : IPV6_DROP_MEMBERSHIP;
-		copymem(&greq.ipv6mr_multiaddr, p_ip.get_ipv6(), 16);
+		memcpy(&greq.ipv6mr_multiaddr, p_ip.get_ipv6(), 16);
 		greq.ipv6mr_interface = if_v6id;
 		ret = setsockopt(_sock, level, sock_opt, (const char *)&greq, sizeof(greq));
 	}
@@ -290,13 +313,8 @@ void NetSocketPosix::_set_socket(SOCKET_TYPE p_sock, IP::Type p_ip_type, bool p_
 void NetSocketPosix::_set_close_exec_enabled(bool p_enabled) {
 #ifndef WINDOWS_ENABLED
 	// Enable close on exec to avoid sharing with subprocesses. Off by default on Windows.
-#if defined(NO_FCNTL)
-	unsigned long par = p_enabled ? 1 : 0;
-	SOCK_IOCTL(_sock, FIOCLEX, &par);
-#else
 	int opts = fcntl(_sock, F_GETFD);
 	fcntl(_sock, F_SETFD, opts | FD_CLOEXEC);
-#endif
 #endif
 }
 
@@ -306,8 +324,9 @@ Error NetSocketPosix::open(Type p_sock_type, IP::Type &ip_type) {
 
 #if defined(__OpenBSD__)
 	// OpenBSD does not support dual stacking, fallback to IPv4 only.
-	if (ip_type == IP::TYPE_ANY)
+	if (ip_type == IP::TYPE_ANY) {
 		ip_type = IP::TYPE_IPV4;
+	}
 #endif
 
 	int family = ip_type == IP::TYPE_IPV4 ? AF_INET : AF_INET6;
@@ -376,7 +395,7 @@ void NetSocketPosix::close() {
 	_is_stream = false;
 }
 
-Error NetSocketPosix::bind(IP_Address p_addr, uint16_t p_port) {
+Error NetSocketPosix::bind(IPAddress p_addr, uint16_t p_port) {
 	ERR_FAIL_COND_V(!is_open(), ERR_UNCONFIGURED);
 	ERR_FAIL_COND_V(!_can_use_ip(p_addr, true), ERR_INVALID_PARAMETER);
 
@@ -384,8 +403,8 @@ Error NetSocketPosix::bind(IP_Address p_addr, uint16_t p_port) {
 	size_t addr_size = _set_addr_storage(&addr, p_addr, p_port, _ip_type);
 
 	if (::bind(_sock, (struct sockaddr *)&addr, addr_size) != 0) {
-		_get_socket_error();
-		print_verbose("Failed to bind socket.");
+		NetError err = _get_socket_error();
+		print_verbose("Failed to bind socket. Error: " + itos(err));
 		close();
 		return ERR_UNAVAILABLE;
 	}
@@ -401,12 +420,12 @@ Error NetSocketPosix::listen(int p_max_pending) {
 		print_verbose("Failed to listen from socket.");
 		close();
 		return FAILED;
-	};
+	}
 
 	return OK;
 }
 
-Error NetSocketPosix::connect_to_host(IP_Address p_host, uint16_t p_port) {
+Error NetSocketPosix::connect_to_host(IPAddress p_host, uint16_t p_port) {
 	ERR_FAIL_COND_V(!is_open(), ERR_UNCONFIGURED);
 	ERR_FAIL_COND_V(!_can_use_ip(p_host, false), ERR_INVALID_PARAMETER);
 
@@ -446,8 +465,8 @@ Error NetSocketPosix::poll(PollType p_type, int p_timeout) const {
 	FD_ZERO(&wr);
 	FD_ZERO(&ex);
 	FD_SET(_sock, &ex);
-	struct timeval timeout = { p_timeout, 0 };
-	// For blocking operation, pass nullptr  timeout pointer to select.
+	struct timeval timeout = { p_timeout / 1000, (p_timeout % 1000) * 1000 };
+	// For blocking operation, pass nullptr timeout pointer to select.
 	struct timeval *tp = nullptr;
 	if (p_timeout >= 0) {
 		//  If timeout is non-negative, we want to specify the timeout instead.
@@ -475,8 +494,9 @@ Error NetSocketPosix::poll(PollType p_type, int p_timeout) const {
 		return FAILED;
 	}
 
-	if (ret == 0)
+	if (ret == 0) {
 		return ERR_BUSY;
+	}
 
 	if (FD_ISSET(_sock, &ex)) {
 		_get_socket_error();
@@ -484,10 +504,12 @@ Error NetSocketPosix::poll(PollType p_type, int p_timeout) const {
 		return FAILED;
 	}
 
-	if (rdp && FD_ISSET(_sock, rdp))
+	if (rdp && FD_ISSET(_sock, rdp)) {
 		ready = true;
-	if (wrp && FD_ISSET(_sock, wrp))
+	}
+	if (wrp && FD_ISSET(_sock, wrp)) {
 		ready = true;
+	}
 
 	return ready ? OK : ERR_BUSY;
 #else
@@ -534,13 +556,17 @@ Error NetSocketPosix::recv(uint8_t *p_buffer, int p_len, int &r_read) {
 			return ERR_BUSY;
 		}
 
+		if (err == ERR_NET_BUFFER_TOO_SMALL) {
+			return ERR_OUT_OF_MEMORY;
+		}
+
 		return FAILED;
 	}
 
 	return OK;
 }
 
-Error NetSocketPosix::recvfrom(uint8_t *p_buffer, int p_len, int &r_read, IP_Address &r_ip, uint16_t &r_port, bool p_peek) {
+Error NetSocketPosix::recvfrom(uint8_t *p_buffer, int p_len, int &r_read, IPAddress &r_ip, uint16_t &r_port, bool p_peek) {
 	ERR_FAIL_COND_V(!is_open(), ERR_UNCONFIGURED);
 
 	struct sockaddr_storage from;
@@ -553,6 +579,10 @@ Error NetSocketPosix::recvfrom(uint8_t *p_buffer, int p_len, int &r_read, IP_Add
 		NetError err = _get_socket_error();
 		if (err == ERR_NET_WOULD_BLOCK) {
 			return ERR_BUSY;
+		}
+
+		if (err == ERR_NET_BUFFER_TOO_SMALL) {
+			return ERR_OUT_OF_MEMORY;
 		}
 
 		return FAILED;
@@ -590,6 +620,9 @@ Error NetSocketPosix::send(const uint8_t *p_buffer, int p_len, int &r_sent) {
 		if (err == ERR_NET_WOULD_BLOCK) {
 			return ERR_BUSY;
 		}
+		if (err == ERR_NET_BUFFER_TOO_SMALL) {
+			return ERR_OUT_OF_MEMORY;
+		}
 
 		return FAILED;
 	}
@@ -597,7 +630,7 @@ Error NetSocketPosix::send(const uint8_t *p_buffer, int p_len, int &r_sent) {
 	return OK;
 }
 
-Error NetSocketPosix::sendto(const uint8_t *p_buffer, int p_len, int &r_sent, IP_Address p_ip, uint16_t p_port) {
+Error NetSocketPosix::sendto(const uint8_t *p_buffer, int p_len, int &r_sent, IPAddress p_ip, uint16_t p_port) {
 	ERR_FAIL_COND_V(!is_open(), ERR_UNCONFIGURED);
 
 	struct sockaddr_storage addr;
@@ -608,6 +641,9 @@ Error NetSocketPosix::sendto(const uint8_t *p_buffer, int p_len, int &r_sent, IP
 		NetError err = _get_socket_error();
 		if (err == ERR_NET_WOULD_BLOCK) {
 			return ERR_BUSY;
+		}
+		if (err == ERR_NET_BUFFER_TOO_SMALL) {
+			return ERR_OUT_OF_MEMORY;
 		}
 
 		return FAILED;
@@ -635,7 +671,7 @@ void NetSocketPosix::set_blocking_enabled(bool p_enabled) {
 	ERR_FAIL_COND(!is_open());
 
 	int ret = 0;
-#if defined(WINDOWS_ENABLED) || defined(NO_FCNTL)
+#if defined(WINDOWS_ENABLED)
 	unsigned long par = p_enabled ? 0 : 1;
 	ret = SOCK_IOCTL(_sock, FIONBIO, &par);
 #else
@@ -716,7 +752,21 @@ int NetSocketPosix::get_available_bytes() const {
 	return len;
 }
 
-Ref<NetSocket> NetSocketPosix::accept(IP_Address &r_ip, uint16_t &r_port) {
+Error NetSocketPosix::get_socket_address(IPAddress *r_ip, uint16_t *r_port) const {
+	ERR_FAIL_COND_V(!is_open(), FAILED);
+
+	struct sockaddr_storage saddr;
+	socklen_t len = sizeof(saddr);
+	if (getsockname(_sock, (struct sockaddr *)&saddr, &len) != 0) {
+		_get_socket_error();
+		print_verbose("Error when reading local socket address.");
+		return FAILED;
+	}
+	_set_ip_port(&saddr, r_ip, r_port);
+	return OK;
+}
+
+Ref<NetSocket> NetSocketPosix::accept(IPAddress &r_ip, uint16_t &r_port) {
 	Ref<NetSocket> out;
 	ERR_FAIL_COND_V(!is_open(), out);
 
@@ -729,7 +779,7 @@ Ref<NetSocket> NetSocketPosix::accept(IP_Address &r_ip, uint16_t &r_port) {
 		return out;
 	}
 
-	_set_ip_port(&their_addr, r_ip, r_port);
+	_set_ip_port(&their_addr, &r_ip, &r_port);
 
 	NetSocketPosix *ns = memnew(NetSocketPosix);
 	ns->_set_socket(fd, _ip_type, _is_stream);
@@ -737,11 +787,12 @@ Ref<NetSocket> NetSocketPosix::accept(IP_Address &r_ip, uint16_t &r_port) {
 	return Ref<NetSocket>(ns);
 }
 
-Error NetSocketPosix::join_multicast_group(const IP_Address &p_multi_address, String p_if_name) {
+Error NetSocketPosix::join_multicast_group(const IPAddress &p_multi_address, const String &p_if_name) {
 	return _change_multicast_group(p_multi_address, p_if_name, true);
 }
 
-Error NetSocketPosix::leave_multicast_group(const IP_Address &p_multi_address, String p_if_name) {
+Error NetSocketPosix::leave_multicast_group(const IPAddress &p_multi_address, const String &p_if_name) {
 	return _change_multicast_group(p_multi_address, p_if_name, false);
 }
-#endif
+
+#endif // UNIX_SOCKET_UNAVAILABLE

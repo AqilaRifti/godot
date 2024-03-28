@@ -1,11 +1,7 @@
 using System;
-using GodotTools.Core;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using Microsoft.Build.Construction;
-using Microsoft.Build.Globbing;
+using Microsoft.Build.Locator;
 
 namespace GodotTools.ProjectEditor
 {
@@ -25,51 +21,23 @@ namespace GodotTools.ProjectEditor
 
     public static class ProjectUtils
     {
-        public static MSBuildProject Open(string path)
+        public static void MSBuildLocatorRegisterLatest(out Version version, out string path)
+        {
+            var instance = MSBuildLocator.QueryVisualStudioInstances()
+                .OrderByDescending(x => x.Version)
+                .First();
+            MSBuildLocator.RegisterInstance(instance);
+            version = instance.Version;
+            path = instance.MSBuildPath;
+        }
+
+        public static void MSBuildLocatorRegisterMSBuildPath(string msbuildPath)
+            => MSBuildLocator.RegisterMSBuildPath(msbuildPath);
+
+        public static MSBuildProject? Open(string path)
         {
             var root = ProjectRootElement.Open(path);
             return root != null ? new MSBuildProject(root) : null;
-        }
-
-        private static List<string> GetAllFilesRecursive(string rootDirectory, string mask)
-        {
-            string[] files = Directory.GetFiles(rootDirectory, mask, SearchOption.AllDirectories);
-
-            // We want relative paths
-            for (int i = 0; i < files.Length; i++)
-            {
-                files[i] = files[i].RelativeToPath(rootDirectory);
-            }
-
-            return new List<string>(files);
-        }
-
-        // NOTE: Assumes auto-including items. Only used by the scripts metadata generator, which will be replaced with source generators in the future.
-        public static IEnumerable<string> GetIncludeFiles(string projectPath, string itemType)
-        {
-            var excluded = new List<string>();
-            var includedFiles = GetAllFilesRecursive(Path.GetDirectoryName(projectPath), "*.cs");
-
-            var root = ProjectRootElement.Open(projectPath);
-            Debug.Assert(root != null);
-
-            foreach (var item in root.Items)
-            {
-                if (string.IsNullOrEmpty(item.Condition))
-                    continue;
-
-                if (item.ItemType != itemType)
-                    continue;
-
-                string normalizedRemove = item.Remove.NormalizePath();
-
-                var glob = MSBuildGlob.Parse(normalizedRemove);
-                excluded.AddRange(includedFiles.Where(includedFile => glob.IsMatch(includedFile)));
-            }
-
-            includedFiles.RemoveAll(f => excluded.Contains(f));
-
-            return includedFiles;
         }
 
         public static void MigrateToProjectSdksStyle(MSBuildProject project, string projectName)
@@ -89,7 +57,8 @@ namespace GodotTools.ProjectEditor
             var root = project.Root;
             string godotSdkAttrValue = ProjectGenerator.GodotSdkAttrValue;
 
-            if (!string.IsNullOrEmpty(root.Sdk) && root.Sdk.Trim().Equals(godotSdkAttrValue, StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(root.Sdk) &&
+                root.Sdk.Trim().Equals(godotSdkAttrValue, StringComparison.OrdinalIgnoreCase))
                 return;
 
             root.Sdk = godotSdkAttrValue;

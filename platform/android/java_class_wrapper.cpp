@@ -1,63 +1,66 @@
-/*************************************************************************/
-/*  java_class_wrapper.cpp                                               */
-/*************************************************************************/
-/*                       This file is part of:                           */
-/*                           GODOT ENGINE                                */
-/*                      https://godotengine.org                          */
-/*************************************************************************/
-/* Copyright (c) 2007-2020 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2020 Godot Engine contributors (cf. AUTHORS.md).   */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
+/**************************************************************************/
+/*  java_class_wrapper.cpp                                                */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
 
 #include "api/java_class_wrapper.h"
+
 #include "string_android.h"
 #include "thread_jandroid.h"
 
 bool JavaClass::_call_method(JavaObject *p_instance, const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error, Variant &ret) {
-	Map<StringName, List<MethodInfo>>::Element *M = methods.find(p_method);
-	if (!M)
+	HashMap<StringName, List<MethodInfo>>::Iterator M = methods.find(p_method);
+	if (!M) {
 		return false;
+	}
 
-	JNIEnv *env = ThreadAndroid::get_env();
+	JNIEnv *env = get_jni_env();
+	ERR_FAIL_NULL_V(env, false);
 
 	MethodInfo *method = nullptr;
-	for (List<MethodInfo>::Element *E = M->get().front(); E; E = E->next()) {
-		if (!p_instance && !E->get()._static) {
+	for (MethodInfo &E : M->value) {
+		if (!p_instance && !E._static) {
 			r_error.error = Callable::CallError::CALL_ERROR_INSTANCE_IS_NULL;
 			continue;
 		}
 
-		int pc = E->get().param_types.size();
-		if (pc > p_argcount) {
+		int pc = E.param_types.size();
+		if (p_argcount < pc) {
 			r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
-			r_error.argument = pc;
+			r_error.expected = pc;
 			continue;
 		}
-		if (pc < p_argcount) {
+		if (p_argcount > pc) {
 			r_error.error = Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS;
-			r_error.argument = pc;
+			r_error.expected = pc;
 			continue;
 		}
-		uint32_t *ptypes = E->get().param_types.ptrw();
+		uint32_t *ptypes = E.param_types.ptrw();
 		bool valid = true;
 
 		for (int i = 0; i < pc; i++) {
@@ -67,8 +70,9 @@ bool JavaClass::_call_method(JavaObject *p_instance, const StringName &p_method,
 					//bug?
 				} break;
 				case ARG_TYPE_BOOLEAN: {
-					if (p_args[i]->get_type() != Variant::BOOL)
+					if (p_args[i]->get_type() != Variant::BOOL) {
 						arg_expected = Variant::BOOL;
+					}
 				} break;
 				case ARG_NUMBER_CLASS_BIT | ARG_TYPE_BYTE:
 				case ARG_NUMBER_CLASS_BIT | ARG_TYPE_CHAR:
@@ -80,33 +84,33 @@ bool JavaClass::_call_method(JavaObject *p_instance, const StringName &p_method,
 				case ARG_TYPE_SHORT:
 				case ARG_TYPE_INT:
 				case ARG_TYPE_LONG: {
-					if (!p_args[i]->is_num())
+					if (!p_args[i]->is_num()) {
 						arg_expected = Variant::INT;
-
+					}
 				} break;
 				case ARG_NUMBER_CLASS_BIT | ARG_TYPE_FLOAT:
 				case ARG_NUMBER_CLASS_BIT | ARG_TYPE_DOUBLE:
 				case ARG_TYPE_FLOAT:
 				case ARG_TYPE_DOUBLE: {
-					if (!p_args[i]->is_num())
+					if (!p_args[i]->is_num()) {
 						arg_expected = Variant::FLOAT;
-
+					}
 				} break;
 				case ARG_TYPE_STRING: {
-					if (p_args[i]->get_type() != Variant::STRING)
+					if (p_args[i]->get_type() != Variant::STRING) {
 						arg_expected = Variant::STRING;
-
+					}
 				} break;
 				case ARG_TYPE_CLASS: {
-					if (p_args[i]->get_type() != Variant::OBJECT)
+					if (p_args[i]->get_type() != Variant::OBJECT) {
 						arg_expected = Variant::OBJECT;
-					else {
-						Ref<Reference> ref = *p_args[i];
+					} else {
+						Ref<RefCounted> ref = *p_args[i];
 						if (!ref.is_null()) {
 							if (Object::cast_to<JavaObject>(ref.ptr())) {
 								Ref<JavaObject> jo = ref;
 								//could be faster
-								jclass c = env->FindClass(E->get().param_sigs[i].operator String().utf8().get_data());
+								jclass c = env->FindClass(E.param_sigs[i].operator String().utf8().get_data());
 								if (!c || !env->IsInstanceOf(jo->instance, c)) {
 									arg_expected = Variant::OBJECT;
 								} else {
@@ -117,12 +121,11 @@ bool JavaClass::_call_method(JavaObject *p_instance, const StringName &p_method,
 							}
 						}
 					}
-
 				} break;
 				default: {
-					if (p_args[i]->get_type() != Variant::ARRAY)
+					if (p_args[i]->get_type() != Variant::ARRAY) {
 						arg_expected = Variant::ARRAY;
-
+					}
 				} break;
 			}
 
@@ -134,15 +137,17 @@ bool JavaClass::_call_method(JavaObject *p_instance, const StringName &p_method,
 				break;
 			}
 		}
-		if (!valid)
+		if (!valid) {
 			continue;
+		}
 
-		method = &E->get();
+		method = &E;
 		break;
 	}
 
-	if (!method)
+	if (!method) {
 		return true; //no version convinces
+	}
 
 	r_error.error = Callable::CallError::CALL_OK;
 
@@ -473,21 +478,21 @@ bool JavaClass::_call_method(JavaObject *p_instance, const StringName &p_method,
 		} break;
 	}
 
-	for (List<jobject>::Element *E = to_free.front(); E; E = E->next()) {
-		env->DeleteLocalRef(E->get());
+	for (jobject &E : to_free) {
+		env->DeleteLocalRef(E);
 	}
 
 	return success;
 }
 
-Variant JavaClass::call(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
+Variant JavaClass::callp(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
 	Variant ret;
 	bool found = _call_method(nullptr, p_method, p_args, p_argcount, r_error, ret);
 	if (found) {
 		return ret;
 	}
 
-	return Reference::call(p_method, p_args, p_argcount, r_error);
+	return RefCounted::callp(p_method, p_args, p_argcount, r_error);
 }
 
 JavaClass::JavaClass() {
@@ -495,7 +500,7 @@ JavaClass::JavaClass() {
 
 /////////////////////
 
-Variant JavaObject::call(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
+Variant JavaObject::callp(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
 	return Variant();
 }
 
@@ -779,9 +784,9 @@ bool JavaClass::_convert_object_to_variant(JNIEnv *env, jobject obj, Variant &va
 
 			for (int i = 0; i < count; i++) {
 				jobject o = env->GetObjectArrayElement(arr, i);
-				if (!o)
+				if (!o) {
 					ret.push_back(Variant());
-				else {
+				} else {
 					bool val = env->CallBooleanMethod(o, JavaClassWrapper::singleton->Boolean_booleanValue);
 					ret.push_back(val);
 				}
@@ -800,9 +805,9 @@ bool JavaClass::_convert_object_to_variant(JNIEnv *env, jobject obj, Variant &va
 
 			for (int i = 0; i < count; i++) {
 				jobject o = env->GetObjectArrayElement(arr, i);
-				if (!o)
+				if (!o) {
 					ret.push_back(Variant());
-				else {
+				} else {
 					int val = env->CallByteMethod(o, JavaClassWrapper::singleton->Byte_byteValue);
 					ret.push_back(val);
 				}
@@ -820,9 +825,9 @@ bool JavaClass::_convert_object_to_variant(JNIEnv *env, jobject obj, Variant &va
 
 			for (int i = 0; i < count; i++) {
 				jobject o = env->GetObjectArrayElement(arr, i);
-				if (!o)
+				if (!o) {
 					ret.push_back(Variant());
-				else {
+				} else {
 					int val = env->CallCharMethod(o, JavaClassWrapper::singleton->Character_characterValue);
 					ret.push_back(val);
 				}
@@ -840,9 +845,9 @@ bool JavaClass::_convert_object_to_variant(JNIEnv *env, jobject obj, Variant &va
 
 			for (int i = 0; i < count; i++) {
 				jobject o = env->GetObjectArrayElement(arr, i);
-				if (!o)
+				if (!o) {
 					ret.push_back(Variant());
-				else {
+				} else {
 					int val = env->CallShortMethod(o, JavaClassWrapper::singleton->Short_shortValue);
 					ret.push_back(val);
 				}
@@ -860,9 +865,9 @@ bool JavaClass::_convert_object_to_variant(JNIEnv *env, jobject obj, Variant &va
 
 			for (int i = 0; i < count; i++) {
 				jobject o = env->GetObjectArrayElement(arr, i);
-				if (!o)
+				if (!o) {
 					ret.push_back(Variant());
-				else {
+				} else {
 					int val = env->CallIntMethod(o, JavaClassWrapper::singleton->Integer_integerValue);
 					ret.push_back(val);
 				}
@@ -880,9 +885,9 @@ bool JavaClass::_convert_object_to_variant(JNIEnv *env, jobject obj, Variant &va
 
 			for (int i = 0; i < count; i++) {
 				jobject o = env->GetObjectArrayElement(arr, i);
-				if (!o)
+				if (!o) {
 					ret.push_back(Variant());
-				else {
+				} else {
 					int64_t val = env->CallLongMethod(o, JavaClassWrapper::singleton->Long_longValue);
 					ret.push_back(val);
 				}
@@ -900,9 +905,9 @@ bool JavaClass::_convert_object_to_variant(JNIEnv *env, jobject obj, Variant &va
 
 			for (int i = 0; i < count; i++) {
 				jobject o = env->GetObjectArrayElement(arr, i);
-				if (!o)
+				if (!o) {
 					ret.push_back(Variant());
-				else {
+				} else {
 					float val = env->CallFloatMethod(o, JavaClassWrapper::singleton->Float_floatValue);
 					ret.push_back(val);
 				}
@@ -920,9 +925,9 @@ bool JavaClass::_convert_object_to_variant(JNIEnv *env, jobject obj, Variant &va
 
 			for (int i = 0; i < count; i++) {
 				jobject o = env->GetObjectArrayElement(arr, i);
-				if (!o)
+				if (!o) {
 					ret.push_back(Variant());
-				else {
+				} else {
 					double val = env->CallDoubleMethod(o, JavaClassWrapper::singleton->Double_doubleValue);
 					ret.push_back(val);
 				}
@@ -941,9 +946,9 @@ bool JavaClass::_convert_object_to_variant(JNIEnv *env, jobject obj, Variant &va
 
 			for (int i = 0; i < count; i++) {
 				jobject o = env->GetObjectArrayElement(arr, i);
-				if (!o)
+				if (!o) {
 					ret.push_back(Variant());
-				else {
+				} else {
 					String val = jstring_to_string((jstring)o, env);
 					ret.push_back(val);
 				}
@@ -961,21 +966,19 @@ bool JavaClass::_convert_object_to_variant(JNIEnv *env, jobject obj, Variant &va
 }
 
 Ref<JavaClass> JavaClassWrapper::wrap(const String &p_class) {
-	if (class_cache.has(p_class))
+	if (class_cache.has(p_class)) {
 		return class_cache[p_class];
+	}
 
-	JNIEnv *env = ThreadAndroid::get_env();
+	JNIEnv *env = get_jni_env();
+	ERR_FAIL_NULL_V(env, Ref<JavaClass>());
 
 	jclass bclass = env->FindClass(p_class.utf8().get_data());
-	ERR_FAIL_COND_V(!bclass, Ref<JavaClass>());
-
-	//jmethodID getDeclaredMethods = env->GetMethodID(bclass,"getDeclaredMethods", "()[Ljava/lang/reflect/Method;");
-
-	//ERR_FAIL_COND_V(!getDeclaredMethods,Ref<JavaClass>());
+	ERR_FAIL_NULL_V(bclass, Ref<JavaClass>());
 
 	jobjectArray methods = (jobjectArray)env->CallObjectMethod(bclass, getDeclaredMethods);
 
-	ERR_FAIL_COND_V(!methods, Ref<JavaClass>());
+	ERR_FAIL_NULL_V(methods, Ref<JavaClass>());
 
 	Ref<JavaClass> java_class = memnew(JavaClass);
 
@@ -1055,9 +1058,10 @@ Ref<JavaClass> JavaClassWrapper::wrap(const String &p_class) {
 			float new_likeliness = 0;
 			float existing_likeliness = 0;
 
-			if (E->get().param_types.size() != mi.param_types.size())
+			if (E->get().param_types.size() != mi.param_types.size()) {
 				continue;
-			bool valid = true;
+			}
+			bool this_valid = true;
 			for (int j = 0; j < E->get().param_types.size(); j++) {
 				Variant::Type _new;
 				float new_l;
@@ -1066,15 +1070,16 @@ Ref<JavaClass> JavaClassWrapper::wrap(const String &p_class) {
 				JavaClass::_convert_to_variant_type(E->get().param_types[j], existing, existing_l);
 				JavaClass::_convert_to_variant_type(mi.param_types[j], _new, new_l);
 				if (_new != existing) {
-					valid = false;
+					this_valid = false;
 					break;
 				}
 				new_likeliness += new_l;
 				existing_likeliness = existing_l;
 			}
 
-			if (!valid)
+			if (!this_valid) {
 				continue;
+			}
 
 			if (new_likeliness > existing_likeliness) {
 				java_class->methods[str_method].erase(E);
@@ -1085,10 +1090,11 @@ Ref<JavaClass> JavaClassWrapper::wrap(const String &p_class) {
 		}
 
 		if (!discard) {
-			if (mi._static)
+			if (mi._static) {
 				mi.method = env->GetStaticMethodID(bclass, str_method.utf8().get_data(), signature.utf8().get_data());
-			else
+			} else {
 				mi.method = env->GetMethodID(bclass, str_method.utf8().get_data(), signature.utf8().get_data());
+			}
 
 			ERR_CONTINUE(!mi.method);
 
@@ -1098,7 +1104,7 @@ Ref<JavaClass> JavaClassWrapper::wrap(const String &p_class) {
 		env->DeleteLocalRef(obj);
 		env->DeleteLocalRef(param_types);
 		env->DeleteLocalRef(return_type);
-	};
+	}
 
 	env->DeleteLocalRef(methods);
 
@@ -1148,10 +1154,11 @@ JavaClassWrapper *JavaClassWrapper::singleton = nullptr;
 JavaClassWrapper::JavaClassWrapper(jobject p_activity) {
 	singleton = this;
 
-	JNIEnv *env = ThreadAndroid::get_env();
+	JNIEnv *env = get_jni_env();
+	ERR_FAIL_NULL(env);
 
-	jclass activityClass = env->FindClass("android/app/Activity");
-	jmethodID getClassLoader = env->GetMethodID(activityClass, "getClassLoader", "()Ljava/lang/ClassLoader;");
+	jclass activity = env->FindClass("android/app/Activity");
+	jmethodID getClassLoader = env->GetMethodID(activity, "getClassLoader", "()Ljava/lang/ClassLoader;");
 	classLoader = env->CallObjectMethod(p_activity, getClassLoader);
 	classLoader = (jclass)env->NewGlobalRef(classLoader);
 	jclass classLoaderClass = env->FindClass("java/lang/ClassLoader");
@@ -1161,18 +1168,18 @@ JavaClassWrapper::JavaClassWrapper(jobject p_activity) {
 	getDeclaredMethods = env->GetMethodID(bclass, "getDeclaredMethods", "()[Ljava/lang/reflect/Method;");
 	getFields = env->GetMethodID(bclass, "getFields", "()[Ljava/lang/reflect/Field;");
 	Class_getName = env->GetMethodID(bclass, "getName", "()Ljava/lang/String;");
-	//
+
 	bclass = env->FindClass("java/lang/reflect/Method");
 	getParameterTypes = env->GetMethodID(bclass, "getParameterTypes", "()[Ljava/lang/Class;");
 	getReturnType = env->GetMethodID(bclass, "getReturnType", "()Ljava/lang/Class;");
 	getName = env->GetMethodID(bclass, "getName", "()Ljava/lang/String;");
 	getModifiers = env->GetMethodID(bclass, "getModifiers", "()I");
-	///
+
 	bclass = env->FindClass("java/lang/reflect/Field");
 	Field_getName = env->GetMethodID(bclass, "getName", "()Ljava/lang/String;");
 	Field_getModifiers = env->GetMethodID(bclass, "getModifiers", "()I");
 	Field_get = env->GetMethodID(bclass, "get", "(Ljava/lang/Object;)Ljava/lang/Object;");
-	// each
+
 	bclass = env->FindClass("java/lang/Boolean");
 	Boolean_booleanValue = env->GetMethodID(bclass, "booleanValue", "()Z");
 

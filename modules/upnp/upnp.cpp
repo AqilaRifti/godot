@@ -1,46 +1,46 @@
-/*************************************************************************/
-/*  upnp.cpp                                                             */
-/*************************************************************************/
-/*                       This file is part of:                           */
-/*                           GODOT ENGINE                                */
-/*                      https://godotengine.org                          */
-/*************************************************************************/
-/* Copyright (c) 2007-2020 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2020 Godot Engine contributors (cf. AUTHORS.md).   */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
+/**************************************************************************/
+/*  upnp.cpp                                                              */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
 
 #include "upnp.h"
 
-#include <miniupnpc/miniwget.h>
-#include <miniupnpc/upnpcommands.h>
+#include <miniwget.h>
+#include <upnpcommands.h>
 
 #include <stdlib.h>
 
 bool UPNP::is_common_device(const String &dev) const {
-	return dev.empty() ||
-		   dev.find("InternetGatewayDevice") >= 0 ||
-		   dev.find("WANIPConnection") >= 0 ||
-		   dev.find("WANPPPConnection") >= 0 ||
-		   dev.find("rootdevice") >= 0;
+	return dev.is_empty() ||
+			dev.find("InternetGatewayDevice") >= 0 ||
+			dev.find("WANIPConnection") >= 0 ||
+			dev.find("WANPPPConnection") >= 0 ||
+			dev.find("rootdevice") >= 0;
 }
 
 int UPNP::discover(int timeout, int ttl, const String &device_filter) {
@@ -52,10 +52,12 @@ int UPNP::discover(int timeout, int ttl, const String &device_filter) {
 	int error = 0;
 	struct UPNPDev *devlist;
 
+	CharString cs = discover_multicast_if.utf8();
+	const char *m_if = cs.length() ? cs.get_data() : nullptr;
 	if (is_common_device(device_filter)) {
-		devlist = upnpDiscover(timeout, discover_multicast_if.utf8().get_data(), nullptr, discover_local_port, discover_ipv6, ttl, &error);
+		devlist = upnpDiscover(timeout, m_if, nullptr, discover_local_port, discover_ipv6, ttl, &error);
 	} else {
-		devlist = upnpDiscoverAll(timeout, discover_multicast_if.utf8().get_data(), nullptr, discover_local_port, discover_ipv6, ttl, &error);
+		devlist = upnpDiscoverAll(timeout, m_if, nullptr, discover_local_port, discover_ipv6, ttl, &error);
 	}
 
 	if (error != UPNPDISCOVER_SUCCESS) {
@@ -76,7 +78,7 @@ int UPNP::discover(int timeout, int ttl, const String &device_filter) {
 	struct UPNPDev *dev = devlist;
 
 	while (dev) {
-		if (device_filter.empty() || strstr(dev->st, device_filter.utf8().get_data())) {
+		if (device_filter.is_empty() || strstr(dev->st, device_filter.utf8().get_data())) {
 			add_device_to_list(dev, devlist);
 		}
 
@@ -90,7 +92,7 @@ int UPNP::discover(int timeout, int ttl, const String &device_filter) {
 
 void UPNP::add_device_to_list(UPNPDev *dev, UPNPDev *devlist) {
 	Ref<UPNPDevice> new_device;
-	new_device.instance();
+	new_device.instantiate();
 
 	new_device->set_description_url(dev->descURL);
 	new_device->set_service_type(dev->st);
@@ -240,14 +242,14 @@ Ref<UPNPDevice> UPNP::get_device(int index) const {
 }
 
 void UPNP::add_device(Ref<UPNPDevice> device) {
-	ERR_FAIL_COND(device == nullptr);
+	ERR_FAIL_NULL(device);
 
 	devices.push_back(device);
 }
 
 void UPNP::set_device(int index, Ref<UPNPDevice> device) {
 	ERR_FAIL_INDEX(index, devices.size());
-	ERR_FAIL_COND(device == nullptr);
+	ERR_FAIL_NULL(device);
 
 	devices.set(index, device);
 }
@@ -255,7 +257,7 @@ void UPNP::set_device(int index, Ref<UPNPDevice> device) {
 void UPNP::remove_device(int index) {
 	ERR_FAIL_INDEX(index, devices.size());
 
-	devices.remove(index);
+	devices.remove_at(index);
 }
 
 void UPNP::clear_devices() {
@@ -263,7 +265,7 @@ void UPNP::clear_devices() {
 }
 
 Ref<UPNPDevice> UPNP::get_gateway() const {
-	ERR_FAIL_COND_V_MSG(devices.size() < 1, nullptr, "Couldn't find any UPNPDevices.");
+	ERR_FAIL_COND_V_MSG(devices.is_empty(), nullptr, "Couldn't find any UPNPDevices.");
 
 	for (int i = 0; i < devices.size(); i++) {
 		Ref<UPNPDevice> dev = get_device(i);
@@ -316,8 +318,6 @@ int UPNP::add_port_mapping(int port, int port_internal, String desc, String prot
 	if (dev == nullptr) {
 		return UPNP_RESULT_NO_GATEWAY;
 	}
-
-	dev->delete_port_mapping(port, proto);
 
 	return dev->add_port_mapping(port, port_internal, desc, proto, duration);
 }
@@ -393,9 +393,6 @@ void UPNP::_bind_methods() {
 }
 
 UPNP::UPNP() {
-	discover_multicast_if = "";
-	discover_local_port = 0;
-	discover_ipv6 = false;
 }
 
 UPNP::~UPNP() {

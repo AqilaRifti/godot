@@ -5,7 +5,7 @@ namespace GodotTools.Export
 {
     public static class XcodeHelper
     {
-        private static string _XcodePath = null;
+        private static string? _XcodePath = null;
 
         public static string XcodePath
         {
@@ -16,18 +16,18 @@ namespace GodotTools.Export
                     _XcodePath = FindXcode();
 
                     if (_XcodePath == null)
-                        throw new Exception("Could not find Xcode");
+                        throw new FileNotFoundException("Could not find Xcode.");
                 }
 
                 return _XcodePath;
             }
         }
 
-        private static string FindSelectedXcode()
+        private static string? FindSelectedXcode()
         {
             var outputWrapper = new Godot.Collections.Array();
 
-            int exitCode = Godot.OS.Execute("xcode-select", new string[] { "--print-path" }, blocking: true, output: outputWrapper);
+            int exitCode = Godot.OS.Execute("xcode-select", new string[] { "--print-path" }, output: outputWrapper);
 
             if (exitCode == 0)
             {
@@ -40,9 +40,9 @@ namespace GodotTools.Export
             return null;
         }
 
-        public static string FindXcode()
+        public static string? FindXcode()
         {
-            string selectedXcode = FindSelectedXcode();
+            string? selectedXcode = FindSelectedXcode();
             if (selectedXcode != null)
             {
                 if (Directory.Exists(Path.Combine(selectedXcode, "Contents", "Developer")))
@@ -50,10 +50,10 @@ namespace GodotTools.Export
 
                 // The path already pointed to Contents/Developer
                 var dirInfo = new DirectoryInfo(selectedXcode);
-                if (dirInfo.Name != "Developer" || dirInfo.Parent.Name != "Contents")
+                if (dirInfo is not { Parent.Name: "Contents", Name: "Developer" })
                 {
                     Console.WriteLine(Path.GetDirectoryName(selectedXcode));
-                    Console.WriteLine(System.IO.Directory.GetParent(selectedXcode).Name);
+                    Console.WriteLine(System.IO.Directory.GetParent(selectedXcode)?.Name);
                     Console.Error.WriteLine("Unrecognized path for selected Xcode");
                 }
                 else

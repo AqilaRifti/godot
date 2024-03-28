@@ -1,11 +1,15 @@
 // Non functional android library used to provide Android Studio editor support to the project.
 plugins {
     id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
 }
 
 android {
     compileSdkVersion versions.compileSdk
     buildToolsVersion versions.buildTools
+    ndkVersion versions.ndkVersion
+
+    namespace = "org.godotengine.godot"
 
     defaultConfig {
         minSdkVersion versions.minSdk
@@ -17,12 +21,13 @@ android {
         targetCompatibility versions.javaVersion
     }
 
+    kotlinOptions {
+        jvmTarget = versions.javaVersion
+    }
+
     packagingOptions {
         exclude 'META-INF/LICENSE'
         exclude 'META-INF/NOTICE'
-
-        // Should be uncommented for development purpose within Android Studio
-        // doNotStrip '**/*.so'
     }
 
     sourceSets {

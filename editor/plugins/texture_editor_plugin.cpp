@@ -1,165 +1,181 @@
-/*************************************************************************/
-/*  texture_editor_plugin.cpp                                            */
-/*************************************************************************/
-/*                       This file is part of:                           */
-/*                           GODOT ENGINE                                */
-/*                      https://godotengine.org                          */
-/*************************************************************************/
-/* Copyright (c) 2007-2020 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2020 Godot Engine contributors (cf. AUTHORS.md).   */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
+/**************************************************************************/
+/*  texture_editor_plugin.cpp                                             */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
 
 #include "texture_editor_plugin.h"
 
-#include "core/config/project_settings.h"
-#include "core/io/resource_loader.h"
-#include "editor/editor_settings.h"
+#include "editor/editor_string_names.h"
+#include "editor/themes/editor_scale.h"
+#include "scene/gui/label.h"
+#include "scene/gui/texture_rect.h"
+#include "scene/resources/animated_texture.h"
+#include "scene/resources/atlas_texture.h"
+#include "scene/resources/compressed_texture.h"
+#include "scene/resources/image_texture.h"
+#include "scene/resources/portable_compressed_texture.h"
 
-void TextureEditor::_gui_input(Ref<InputEvent> p_event) {
+TextureRect *TexturePreview::get_texture_display() {
+	return texture_display;
 }
 
-void TextureEditor::_notification(int p_what) {
-	if (p_what == NOTIFICATION_READY) {
-		//get_scene()->connect("node_removed",this,"_node_removed");
-	}
+void TexturePreview::_notification(int p_what) {
+	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE:
+		case NOTIFICATION_THEME_CHANGED: {
+			if (!is_inside_tree()) {
+				// TODO: This is a workaround because `NOTIFICATION_THEME_CHANGED`
+				// is getting called for some reason when the `TexturePreview` is
+				// getting destroyed, which causes `get_theme_font()` to return `nullptr`.
+				// See https://github.com/godotengine/godot/issues/50743.
+				break;
+			}
 
-	if (p_what == NOTIFICATION_DRAW) {
-		Ref<Texture2D> checkerboard = get_theme_icon("Checkerboard", "EditorIcons");
-		Size2 size = get_size();
+			if (metadata_label) {
+				Ref<Font> metadata_label_font = get_theme_font(SNAME("expression"), EditorStringName(EditorFonts));
+				metadata_label->add_theme_font_override("font", metadata_label_font);
+			}
 
-		draw_texture_rect(checkerboard, Rect2(Point2(), size), true);
-
-		int tex_width = texture->get_width() * size.height / texture->get_height();
-		int tex_height = size.height;
-
-		if (tex_width > size.width) {
-			tex_width = size.width;
-			tex_height = texture->get_height() * tex_width / texture->get_width();
-		}
-
-		// Prevent the texture from being unpreviewable after the rescale, so that we can still see something
-		if (tex_height <= 0) {
-			tex_height = 1;
-		}
-		if (tex_width <= 0) {
-			tex_width = 1;
-		}
-
-		int ofs_x = (size.width - tex_width) / 2;
-		int ofs_y = (size.height - tex_height) / 2;
-
-		if (Object::cast_to<CurveTexture>(*texture)) {
-			// In the case of CurveTextures we know they are 1 in height, so fill the preview to see the gradient
-			ofs_y = 0;
-			tex_height = size.height;
-		} else if (Object::cast_to<GradientTexture>(*texture)) {
-			ofs_y = size.height / 4.0;
-			tex_height = size.height / 2.0;
-		}
-
-		draw_texture_rect(texture, Rect2(ofs_x, ofs_y, tex_width, tex_height));
-
-		Ref<Font> font = get_theme_font("font", "Label");
-		int font_size = get_theme_font_size("font_size", "Label");
-
-		String format;
-		if (Object::cast_to<ImageTexture>(*texture)) {
-			format = Image::get_format_name(Object::cast_to<ImageTexture>(*texture)->get_format());
-		} else if (Object::cast_to<StreamTexture2D>(*texture)) {
-			format = Image::get_format_name(Object::cast_to<StreamTexture2D>(*texture)->get_format());
-		} else {
-			format = texture->get_class();
-		}
-		String text = itos(texture->get_width()) + "x" + itos(texture->get_height()) + " " + format;
-
-		Size2 rect = font->get_string_size(text, font_size);
-
-		Vector2 draw_from = size - rect + Size2(-2, font->get_ascent(font_size) - 2);
-		if (draw_from.x < 0) {
-			draw_from.x = 0;
-		}
-
-		draw_string(font, draw_from + Vector2(2, 2), text, HALIGN_LEFT, size.width, font_size, Color(0, 0, 0, 0.5));
-		draw_string(font, draw_from - Vector2(2, 2), text, HALIGN_LEFT, size.width, font_size, Color(0, 0, 0, 0.5));
-		draw_string(font, draw_from, text, HALIGN_LEFT, size.width, font_size, Color(1, 1, 1, 1));
+			checkerboard->set_texture(get_editor_theme_icon(SNAME("Checkerboard")));
+		} break;
 	}
 }
 
-void TextureEditor::_changed_callback(Object *p_changed, const char *p_prop) {
-	if (!is_visible()) {
-		return;
-	}
-	update();
-}
+void TexturePreview::_update_metadata_label_text() {
+	const Ref<Texture2D> texture = texture_display->get_texture();
 
-void TextureEditor::edit(Ref<Texture2D> p_texture) {
-	if (!texture.is_null()) {
-		texture->remove_change_receptor(this);
-	}
-
-	texture = p_texture;
-
-	if (!texture.is_null()) {
-		texture->add_change_receptor(this);
-		update();
+	String format;
+	if (Object::cast_to<ImageTexture>(*texture)) {
+		format = Image::get_format_name(Object::cast_to<ImageTexture>(*texture)->get_format());
+	} else if (Object::cast_to<CompressedTexture2D>(*texture)) {
+		format = Image::get_format_name(Object::cast_to<CompressedTexture2D>(*texture)->get_format());
 	} else {
-		hide();
+		format = texture->get_class();
+	}
+
+	const Ref<Image> image = texture->get_image();
+	if (image.is_valid()) {
+		const int mipmaps = image->get_mipmap_count();
+		// Avoid signed integer overflow that could occur with huge texture sizes by casting everything to uint64_t.
+		uint64_t memory = uint64_t(image->get_width()) * uint64_t(image->get_height()) * uint64_t(Image::get_format_pixel_size(image->get_format()));
+		// Handle VRAM-compressed formats that are stored with 4 bpp.
+		memory >>= Image::get_format_pixel_rshift(image->get_format());
+
+		float mipmaps_multiplier = 1.0;
+		float mipmap_increase = 0.25;
+		for (int i = 0; i < mipmaps; i++) {
+			// Each mip adds 25% memory usage of the previous one.
+			// With a complete mipmap chain, memory usage increases by ~33%.
+			mipmaps_multiplier += mipmap_increase;
+			mipmap_increase *= 0.25;
+		}
+		memory *= mipmaps_multiplier;
+
+		if (mipmaps >= 1) {
+			metadata_label->set_text(
+					vformat(String::utf8("%d×%d %s\n") + TTR("%s Mipmaps") + "\n" + TTR("Memory: %s"),
+							texture->get_width(),
+							texture->get_height(),
+							format,
+							mipmaps,
+							String::humanize_size(memory)));
+		} else {
+			// "No Mipmaps" is easier to distinguish than "0 Mipmaps",
+			// especially since 0, 6, and 8 look quite close with the default code font.
+			metadata_label->set_text(
+					vformat(String::utf8("%d×%d %s\n") + TTR("No Mipmaps") + "\n" + TTR("Memory: %s"),
+							texture->get_width(),
+							texture->get_height(),
+							format,
+							String::humanize_size(memory)));
+		}
+	} else {
+		metadata_label->set_text(
+				vformat(String::utf8("%d×%d %s"),
+						texture->get_width(),
+						texture->get_height(),
+						format));
 	}
 }
 
-void TextureEditor::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("_gui_input"), &TextureEditor::_gui_input);
-}
+TexturePreview::TexturePreview(Ref<Texture2D> p_texture, bool p_show_metadata) {
+	checkerboard = memnew(TextureRect);
+	checkerboard->set_stretch_mode(TextureRect::STRETCH_TILE);
+	checkerboard->set_texture_repeat(CanvasItem::TEXTURE_REPEAT_ENABLED);
+	checkerboard->set_custom_minimum_size(Size2(0.0, 256.0) * EDSCALE);
+	add_child(checkerboard);
 
-TextureEditor::TextureEditor() {
-	set_texture_repeat(TextureRepeat::TEXTURE_REPEAT_ENABLED);
-	set_custom_minimum_size(Size2(1, 150));
-}
+	texture_display = memnew(TextureRect);
+	texture_display->set_texture_filter(TEXTURE_FILTER_NEAREST_WITH_MIPMAPS);
+	texture_display->set_texture(p_texture);
+	texture_display->set_anchors_preset(TextureRect::PRESET_FULL_RECT);
+	texture_display->set_stretch_mode(TextureRect::STRETCH_KEEP_ASPECT_CENTERED);
+	texture_display->set_expand_mode(TextureRect::EXPAND_IGNORE_SIZE);
+	add_child(texture_display);
 
-TextureEditor::~TextureEditor() {
-	if (!texture.is_null()) {
-		texture->remove_change_receptor(this);
+	if (p_show_metadata) {
+		metadata_label = memnew(Label);
+
+		_update_metadata_label_text();
+		p_texture->connect_changed(callable_mp(this, &TexturePreview::_update_metadata_label_text));
+
+		// It's okay that these colors are static since the grid color is static too.
+		metadata_label->add_theme_color_override("font_color", Color::named("white"));
+		metadata_label->add_theme_color_override("font_shadow_color", Color::named("black"));
+
+		metadata_label->add_theme_font_size_override("font_size", 14 * EDSCALE);
+		metadata_label->add_theme_color_override("font_outline_color", Color::named("black"));
+		metadata_label->add_theme_constant_override("outline_size", 8 * EDSCALE);
+		metadata_label->set_h_size_flags(Control::SIZE_SHRINK_END);
+		metadata_label->set_v_size_flags(Control::SIZE_SHRINK_END);
+
+		add_child(metadata_label);
 	}
 }
 
-//
 bool EditorInspectorPluginTexture::can_handle(Object *p_object) {
-	return Object::cast_to<ImageTexture>(p_object) != nullptr || Object::cast_to<AtlasTexture>(p_object) != nullptr || Object::cast_to<StreamTexture2D>(p_object) != nullptr || Object::cast_to<LargeTexture>(p_object) != nullptr || Object::cast_to<AnimatedTexture>(p_object) != nullptr;
+	return Object::cast_to<ImageTexture>(p_object) != nullptr || Object::cast_to<AtlasTexture>(p_object) != nullptr || Object::cast_to<CompressedTexture2D>(p_object) != nullptr || Object::cast_to<PortableCompressedTexture2D>(p_object) != nullptr || Object::cast_to<AnimatedTexture>(p_object) != nullptr || Object::cast_to<Image>(p_object) != nullptr;
 }
 
 void EditorInspectorPluginTexture::parse_begin(Object *p_object) {
-	Texture2D *texture = Object::cast_to<Texture2D>(p_object);
-	if (!texture) {
-		return;
-	}
-	Ref<Texture2D> m(texture);
+	Ref<Texture> texture(Object::cast_to<Texture>(p_object));
+	if (texture.is_null()) {
+		Ref<Image> image(Object::cast_to<Image>(p_object));
+		texture = ImageTexture::create_from_image(image);
 
-	TextureEditor *editor = memnew(TextureEditor);
-	editor->edit(m);
-	add_custom_control(editor);
+		ERR_FAIL_NULL_MSG(texture, "Failed to create the texture from an invalid image.");
+	}
+
+	add_custom_control(memnew(TexturePreview(texture, true)));
 }
 
-TextureEditorPlugin::TextureEditorPlugin(EditorNode *p_node) {
+TextureEditorPlugin::TextureEditorPlugin() {
 	Ref<EditorInspectorPluginTexture> plugin;
-	plugin.instance();
+	plugin.instantiate();
 	add_inspector_plugin(plugin);
 }

@@ -1,42 +1,44 @@
-/*************************************************************************/
-/*  crash_handler_windows.cpp                                            */
-/*************************************************************************/
-/*                       This file is part of:                           */
-/*                           GODOT ENGINE                                */
-/*                      https://godotengine.org                          */
-/*************************************************************************/
-/* Copyright (c) 2007-2020 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2020 Godot Engine contributors (cf. AUTHORS.md).   */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
+/**************************************************************************/
+/*  crash_handler_windows.cpp                                             */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
 
 #include "crash_handler_windows.h"
 
 #include "core/config/project_settings.h"
 #include "core/os/os.h"
+#include "core/string/print_string.h"
+#include "core/version.h"
 #include "main/main.h"
 
 #ifdef CRASH_HANDLER_EXCEPTION
 
-// Backtrace code code based on: https://stackoverflow.com/questions/6205981/windows-c-stack-trace-from-a-running-app
+// Backtrace code based on: https://stackoverflow.com/questions/6205981/windows-c-stack-trace-from-a-running-app
 
 #include <algorithm>
 #include <iterator>
@@ -44,9 +46,6 @@
 #include <vector>
 
 #include <psapi.h>
-
-#pragma comment(lib, "psapi.lib")
-#pragma comment(lib, "dbghelp.lib")
 
 // Some versions of imagehlp.dll lack the proper packing directives themselves
 // so we need to do it.
@@ -79,8 +78,9 @@ public:
 
 	std::string name() { return std::string(sym->Name); }
 	std::string undecorated_name() {
-		if (*sym->Name == '\0')
+		if (*sym->Name == '\0') {
 			return "<couldn't map PC to fn name>";
+		}
 		std::vector<char> und_name(max_name_len);
 		UnDecorateSymbolName(sym->Name, &und_name[0], max_name_len, UNDNAME_COMPLETE);
 		return std::string(&und_name[0], strlen(&und_name[0]));
@@ -109,7 +109,7 @@ public:
 		ret.module_name = temp;
 		std::vector<char> img(ret.image_name.begin(), ret.image_name.end());
 		std::vector<char> mod(ret.module_name.begin(), ret.module_name.end());
-		SymLoadModule64(process, 0, &img[0], &mod[0], (DWORD64)ret.base_address, ret.load_size);
+		SymLoadModule64(process, nullptr, &img[0], &mod[0], (DWORD64)ret.base_address, ret.load_size);
 		return ret;
 	}
 };
@@ -127,16 +127,34 @@ DWORD CrashHandlerException(EXCEPTION_POINTERS *ep) {
 		return EXCEPTION_CONTINUE_SEARCH;
 	}
 
-	fprintf(stderr, "%s: Program crashed\n", __FUNCTION__);
+	String msg;
+	const ProjectSettings *proj_settings = ProjectSettings::get_singleton();
+	if (proj_settings) {
+		msg = proj_settings->get("debug/settings/crash_handler/message");
+	}
 
-	if (OS::get_singleton()->get_main_loop())
+	// Tell MainLoop about the crash. This can be handled by users too in Node.
+	if (OS::get_singleton()->get_main_loop()) {
 		OS::get_singleton()->get_main_loop()->notification(MainLoop::NOTIFICATION_CRASH);
+	}
+
+	print_error("\n================================================================");
+	print_error(vformat("%s: Program crashed", __FUNCTION__));
+
+	// Print the engine version just before, so that people are reminded to include the version in backtrace reports.
+	if (String(VERSION_HASH).is_empty()) {
+		print_error(vformat("Engine version: %s", VERSION_FULL_NAME));
+	} else {
+		print_error(vformat("Engine version: %s (%s)", VERSION_FULL_NAME, VERSION_HASH));
+	}
+	print_error(vformat("Dumping the backtrace. %s", msg));
 
 	// Load the symbols:
-	if (!SymInitialize(process, nullptr, false))
+	if (!SymInitialize(process, nullptr, false)) {
 		return EXCEPTION_CONTINUE_SEARCH;
+	}
 
-	SymSetOptions(SymGetOptions() | SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
+	SymSetOptions(SymGetOptions() | SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_EXACT_SYMBOLS);
 	EnumProcessModules(process, &module_handles[0], module_handles.size() * sizeof(HMODULE), &cbNeeded);
 	module_handles.resize(cbNeeded / sizeof(HMODULE));
 	EnumProcessModules(process, &module_handles[0], module_handles.size() * sizeof(HMODULE), &cbNeeded);
@@ -152,10 +170,18 @@ DWORD CrashHandlerException(EXCEPTION_POINTERS *ep) {
 	frame.AddrStack.Mode = AddrModeFlat;
 	frame.AddrFrame.Mode = AddrModeFlat;
 
-#ifdef _M_X64
+#if defined(_M_X64)
 	frame.AddrPC.Offset = context->Rip;
 	frame.AddrStack.Offset = context->Rsp;
 	frame.AddrFrame.Offset = context->Rbp;
+#elif defined(_M_ARM64) || defined(_M_ARM64EC)
+	frame.AddrPC.Offset = context->Pc;
+	frame.AddrStack.Offset = context->Sp;
+	frame.AddrFrame.Offset = context->Fp;
+#elif defined(_M_ARM)
+	frame.AddrPC.Offset = context->Pc;
+	frame.AddrStack.Offset = context->Sp;
+	frame.AddrFrame.Offset = context->R11;
 #else
 	frame.AddrPC.Offset = context->Eip;
 	frame.AddrStack.Offset = context->Esp;
@@ -169,14 +195,6 @@ DWORD CrashHandlerException(EXCEPTION_POINTERS *ep) {
 	IMAGE_NT_HEADERS *h = ImageNtHeader(base);
 	DWORD image_type = h->FileHeader.Machine;
 
-	String msg;
-	const ProjectSettings *proj_settings = ProjectSettings::get_singleton();
-	if (proj_settings) {
-		msg = proj_settings->get("debug/settings/crash_handler/message");
-	}
-
-	fprintf(stderr, "Dumping the backtrace. %s\n", msg.utf8().get_data());
-
 	int n = 0;
 	do {
 		if (skip_first) {
@@ -185,21 +203,25 @@ DWORD CrashHandlerException(EXCEPTION_POINTERS *ep) {
 			if (frame.AddrPC.Offset != 0) {
 				std::string fnName = symbol(process, frame.AddrPC.Offset).undecorated_name();
 
-				if (SymGetLineFromAddr64(process, frame.AddrPC.Offset, &offset_from_symbol, &line))
-					fprintf(stderr, "[%d] %s (%s:%d)\n", n, fnName.c_str(), line.FileName, line.LineNumber);
-				else
-					fprintf(stderr, "[%d] %s\n", n, fnName.c_str());
-			} else
-				fprintf(stderr, "[%d] ???\n", n);
+				if (SymGetLineFromAddr64(process, frame.AddrPC.Offset, &offset_from_symbol, &line)) {
+					print_error(vformat("[%d] %s (%s:%d)", n, fnName.c_str(), (char *)line.FileName, (int)line.LineNumber));
+				} else {
+					print_error(vformat("[%d] %s", n, fnName.c_str()));
+				}
+			} else {
+				print_error(vformat("[%d] ???", n));
+			}
 
 			n++;
 		}
 
-		if (!StackWalk64(image_type, process, hThread, &frame, context, nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr))
+		if (!StackWalk64(image_type, process, hThread, &frame, context, nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) {
 			break;
+		}
 	} while (frame.AddrReturn.Offset != 0 && n < 256);
 
-	fprintf(stderr, "-- END OF BACKTRACE --\n");
+	print_error("-- END OF BACKTRACE --");
+	print_error("================================================================");
 
 	SymCleanup(process);
 
@@ -216,8 +238,9 @@ CrashHandler::~CrashHandler() {
 }
 
 void CrashHandler::disable() {
-	if (disabled)
+	if (disabled) {
 		return;
+	}
 
 	disabled = true;
 }
